@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is the owner
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+    
+    // Helper function to check if two users are friends
+    function areFriends(uid1, uid2) {
+      return exists(/databases/$(database)/documents/friends/$(uid1)/list/$(uid2));
+    }
+    
+    // Users collection
+    match /users/{uid} {
+      allow read: if true; // Profiles are public
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if false; // Prevent deletion
+    }
+    
+    // Usernames collection (for reserving unique usernames)
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+    
+    // Journal entries
+    match /entries/{entryId} {
+      allow read: if resource.data.visibility == 'public' 
+                  || (isAuthenticated() && resource.data.visibility == 'friends' && areFriends(resource.data.authorUid, request.auth.uid))
+                  || isOwner(resource.data.authorUid);
+      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid;
+      allow update: if isOwner(resource.data.authorUid);
+      allow delete: if isOwner(resource.data.authorUid);
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if true; // If you can read the entry, you can read its comments
+        allow create: if isAuthenticated();
+        allow update, delete: if isOwner(resource.data.authorUid);
+      }
+    }
+    
+    // Friend requests
+    match /friendRequests/{requestId} {
+      allow read: if isAuthenticated() && 
+                  (request.auth.uid == resource.data.fromUid || 
+                   request.auth.uid == resource.data.toUid);
+      allow create: if isAuthenticated() && request.resource.data.fromUid == request.auth.uid;
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.toUid;
+      allow delete: if isAuthenticated() && 
+                    (request.auth.uid == resource.data.fromUid || 
+                     request.auth.uid == resource.data.toUid);
+    }
+    
+    // Friends lists
+    match /friends/{uid}/list/{friendUid} {
+      allow read: if isAuthenticated() && (request.auth.uid == uid || request.auth.uid == friendUid);
+      allow write: if isOwner(uid);
+    }
+    
+    // Forum categories
+    match /forumCategories/{categoryId} {
+      allow read: if true;
+      allow write: if false; // Only admins can create categories (via Firebase Console or admin SDK)
+    }
+    
+    // Forum threads
+    match /forumThreads/{threadId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid;
+      allow update: if isOwner(resource.data.authorUid);
+      allow delete: if isOwner(resource.data.authorUid);
+      
+      // Thread replies subcollection
+      match /replies/{replyId} {
+        allow read: if true;
+        allow create: if isAuthenticated() && request.resource.data.authorUid == request.auth.uid;
+        allow update, delete: if isOwner(resource.data.authorUid);
+      }
+    }
+  }
+}
